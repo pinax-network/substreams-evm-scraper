@@ -48,12 +48,7 @@ const SERVICES = {
     hyperliquid: {
         path: './services/hyperliquid/index.ts',
         description:
-            'Fetch and store Hyperliquid spot pair name lookups from the Info API spotMeta endpoint',
-    },
-    'hyperliquid-outcomes': {
-        path: './services/hyperliquid-outcomes/index.ts',
-        description:
-            'Fetch HIP-4 outcome + question metadata (outcomeMeta + per-id settledOutcome recovery) into state_outcome_meta and state_question_meta',
+            'Fetch Hyperliquid spot pair names + HIP-4 outcome / question metadata in one cycle (spotMeta + outcomeMeta + per-id settledOutcome recovery) into state_spot_pair_names, state_outcome_meta, and state_question_meta',
     },
     'kalshi-live': {
         path: './services/kalshi/live.ts',
@@ -102,14 +97,12 @@ const SETUP_ACTIONS = {
             'Deploy polymarket tables (polymarket_markets, polymarket_assets)',
     },
     hyperliquid: {
-        files: ['./sql.schemas/schema.hyperliquid.sql'],
+        files: [
+            './sql.schemas/schema.hyperliquid.sql',
+            './sql.schemas/schema.hyperliquid_outcomes.sql',
+        ],
         description:
-            'Deploy hyperliquid spot pair name lookup table (state_spot_pair_names)',
-    },
-    'hyperliquid-outcomes': {
-        files: ['./sql.schemas/schema.hyperliquid_outcomes.sql'],
-        description:
-            'Deploy hyperliquid HIP-4 outcome metadata tables (state_outcome_meta, state_question_meta)',
+            'Deploy hyperliquid scraper-managed tables (state_spot_pair_names + HIP-4 state_outcome_meta + state_question_meta)',
     },
     kalshi: {
         files: ['./sql.schemas/schema.kalshi.sql'],
@@ -426,7 +419,6 @@ Services:
   metadata-balances           ${SERVICES['metadata-balances'].description}
   polymarket                  ${SERVICES['polymarket'].description}
   hyperliquid                 ${SERVICES['hyperliquid'].description}
-  hyperliquid-outcomes        ${SERVICES['hyperliquid-outcomes'].description}
   kalshi-live                 ${SERVICES['kalshi-live'].description}
   kalshi-backfill             ${SERVICES['kalshi-backfill'].description}
   metadata-solana-rpc         ${SERVICES['metadata-solana-rpc'].description}
@@ -439,7 +431,6 @@ Examples:
   $ npm run cli run metadata-balances
   $ npm run cli run polymarket
   $ npm run cli run hyperliquid
-  $ npm run cli run hyperliquid-outcomes
   $ npm run cli run metadata-solana-rpc
   $ npm run cli run metadata-solana-extras-rpc
   $ npm run cli run metadata-solana-clickhouse
@@ -661,11 +652,13 @@ const setupHyperliquid = setupCommand
     .addHelpText(
         'after',
         `
-This command deploys the Hyperliquid spot pair name lookup table.
-It only needs to be run once per database to initialize the table.
+This command deploys the Hyperliquid scraper-managed tables. It only
+needs to be run once per database to initialize the tables.
 
 Tables created:
   - state_spot_pair_names: Resolves \`@N\` and canonical pair coin values to BASE/QUOTE strings
+  - state_outcome_meta:    HIP-4 per-outcome metadata (name, description, side specs, settlement)
+  - state_question_meta:   HIP-4 multi-outcome question groupings (namedOutcomes, fallbackOutcome)
 
 Example:
   $ npm run cli setup hyperliquid
@@ -673,41 +666,13 @@ Example:
 `,
     )
     .action(async (options: any) => {
-        log.info('Setting up hyperliquid spot pair name lookup table');
+        log.info('Setting up hyperliquid scraper-managed tables');
         const files = SETUP_ACTIONS.hyperliquid.files.map((f) =>
             resolve(__dirname, f),
         );
         await handleSetupCommand(files, options);
     });
 addClickhouseOptions(setupHyperliquid);
-
-// ---- setup hyperliquid-outcomes ----
-const setupHyperliquidOutcomes = setupCommand
-    .command('hyperliquid-outcomes')
-    .description(SETUP_ACTIONS['hyperliquid-outcomes'].description)
-    .addHelpText(
-        'after',
-        `
-This command deploys the Hyperliquid HIP-4 outcome metadata tables.
-It only needs to be run once per database to initialize the tables.
-
-Tables created:
-  - state_outcome_meta:  Per-outcome metadata (name, description, side specs, settlement)
-  - state_question_meta: Multi-outcome question groupings (namedOutcomes, fallbackOutcome)
-
-Example:
-  $ npm run cli setup hyperliquid-outcomes
-  $ npm run cli setup hyperliquid-outcomes --cluster my_cluster
-`,
-    )
-    .action(async (options: any) => {
-        log.info('Setting up hyperliquid outcome metadata tables');
-        const files = SETUP_ACTIONS['hyperliquid-outcomes'].files.map((f) =>
-            resolve(__dirname, f),
-        );
-        await handleSetupCommand(files, options);
-    });
-addClickhouseOptions(setupHyperliquidOutcomes);
 
 // ---- setup kalshi ----
 const setupKalshi = setupCommand

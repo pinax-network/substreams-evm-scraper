@@ -2,7 +2,7 @@ import PQueue from 'p-queue';
 import { insertClient, query } from '../../lib/clickhouse';
 import { createLogger } from '../../lib/logger';
 import { incrementError, incrementSuccess } from '../../lib/prometheus';
-import { initService, markServiceAlive } from '../../lib/service-init';
+import { markServiceAlive } from '../../lib/service-init';
 import {
     buildLiveOutcomeRow,
     buildOutcomeToQuestion,
@@ -12,10 +12,10 @@ import {
     fetchSettledOutcome,
     type OutcomeMetaRow,
     type QuestionMetaRow,
-} from './info';
+} from './outcomes-info';
 
-const serviceName = 'hyperliquid-outcomes';
-const log = createLogger(serviceName);
+const serviceName = 'hyperliquid';
+const log = createLogger(`${serviceName}:outcomes`);
 
 /**
  * Max in-flight `settledOutcome` lookups per cycle. Cold-start probes ~200
@@ -75,7 +75,7 @@ function nowRefreshTime(): string {
 }
 
 /**
- * One poll cycle:
+ * One outcome-meta poll cycle:
  *   1. Pull `outcomeMeta` (live outcomes + question groupings).
  *   2. Read distinct `outcome_id` from `outcome_fills` to discover settled
  *      outcomes not in the live snapshot.
@@ -83,19 +83,10 @@ function nowRefreshTime(): string {
  *   4. Insert all rows with a single `refresh_time`. RMT collapses repeated
  *      rows on subsequent polls.
  *
- * The CLI runner loops with `AUTO_RESTART_DELAY` between cycles, so one
- * `run()` call = one snapshot.
+ * Caller (the combined `hyperliquid` service in index.ts) orchestrates with
+ * the spot poller in one cycle.
  */
-export async function run(): Promise<void> {
-    initService({ serviceName });
-
-    const infoUrl = process.env.HYPERLIQUID_INFO_URL;
-    if (!infoUrl) {
-        throw new Error(
-            'HYPERLIQUID_INFO_URL is required (set to a Hyperliquid /info endpoint)',
-        );
-    }
-
+export async function runOutcomesCycle(infoUrl: string): Promise<void> {
     log.info('Fetching outcome metadata');
     const startTime = performance.now();
 
@@ -239,8 +230,4 @@ export async function run(): Promise<void> {
     // after the startup grace window.
     markServiceAlive();
     incrementSuccess(serviceName);
-}
-
-if (import.meta.main) {
-    await run();
 }

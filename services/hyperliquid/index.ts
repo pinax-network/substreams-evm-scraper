@@ -1,21 +1,23 @@
-import { insertClient } from '../../lib/clickhouse';
 import { createLogger } from '../../lib/logger';
-import { incrementError, incrementSuccess } from '../../lib/prometheus';
 import { initService } from '../../lib/service-init';
-import {
-    fetchSpotMeta,
-    type HyperliquidSpotMeta,
-    resolvePairNames,
-} from './info';
+import { runOutcomesCycle } from './outcomes';
+import { runSpotCycle } from './spot';
 
 const serviceName = 'hyperliquid';
 const log = createLogger(serviceName);
 
 /**
- * Fetch the latest spot universe + tokens, resolve `@N` pair names into their
- * `BASE/QUOTE` market names with split base/quote token symbols, and snapshot
- * all rows into `state_spot_pair_names` with a fresh `refresh_time`. The CLI
- * runner loops with `AUTO_RESTART_DELAY` between iterations, so a single
+ * Combined Hyperliquid scraper. One cycle runs both the spot-pair-names
+ * snapshot (`state_spot_pair_names`) and the HIP-4 outcome / question
+ * metadata snapshot (`state_outcome_meta` + `state_question_meta`) against
+ * the same HL Info endpoint and ClickHouse database.
+ *
+ * Both sub-cycles share `HYPERLIQUID_INFO_URL` + the global CH client. They
+ * run in parallel — they hit independent Info endpoints and disjoint tables,
+ * so there's no ordering constraint. A failure in either propagates after
+ * both complete (or the slow one is still in flight when the other errors).
+ *
+ * The CLI runner loops with `AUTO_RESTART_DELAY` between cycles, so a single
  * `run()` invocation maps to one poll cycle.
  */
 export async function run(): Promise<void> {
@@ -28,56 +30,26 @@ export async function run(): Promise<void> {
         );
     }
 
-    log.info('Fetching spot metadata');
-    const startTime = performance.now();
+    const results = await Promise.allSettled([
+        runSpotCycle(infoUrl),
+        runOutcomesCycle(infoUrl),
+    ]);
 
-    let meta: HyperliquidSpotMeta;
-    try {
-        meta = await fetchSpotMeta(infoUrl);
-    } catch (error) {
-        log.error('Failed to fetch spot metadata', { error });
-        incrementError(serviceName);
-        throw error;
-    }
+    const errors = results
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map((r) => r.reason);
 
-    const fetchTimeMs = Math.round(performance.now() - startTime);
-    const rows = resolvePairNames(meta);
-
-    log.info('Resolved spot pair names', {
-        pairs: meta.universe.length,
-        tokens: meta.tokens.length,
-        rows: rows.length,
-        fetchTimeMs,
-    });
-
-    if (rows.length === 0) {
-        log.warn('Empty spot universe — skipping insert');
-        return;
-    }
-
-    // ClickHouse DateTime64(3, 'UTC') rejects the trailing `Z`, so trim it
-    // but keep the millisecond precision so closely-spaced polls produce
-    // distinct `refresh_time` values (deterministic RMT merges).
-    const refresh_time = new Date()
-        .toISOString()
-        .slice(0, 23)
-        .replace('T', ' ');
-    const values = rows.map((r) => ({ ...r, refresh_time }));
-
-    try {
-        await insertClient.insert({
-            table: 'state_spot_pair_names',
-            values,
-            format: 'JSONEachRow',
+    if (errors.length > 0) {
+        log.error('Cycle completed with failures', {
+            spot: results[0].status,
+            outcomes: results[1].status,
+            errors: errors.map((e) =>
+                e instanceof Error ? e.message : String(e),
+            ),
         });
-    } catch (error) {
-        log.error('Failed to insert spot pair names', { error });
-        incrementError(serviceName);
-        throw error;
+        // Surface the first error so the supervisor can backoff/restart.
+        throw errors[0];
     }
-
-    log.info('Inserted spot pair names', { count: values.length });
-    incrementSuccess(serviceName);
 }
 
 if (import.meta.main) {

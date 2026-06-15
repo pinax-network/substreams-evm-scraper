@@ -3,7 +3,7 @@ import {
     fetchSpotMeta,
     type HyperliquidSpotMeta,
     resolvePairNames,
-} from './info';
+} from './spot-info';
 
 describe('resolvePairNames', () => {
     test('passes canonical pair name through unchanged', () => {
