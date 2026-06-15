@@ -1,8 +1,7 @@
 import PQueue from 'p-queue';
 import { insertClient, query } from '../../lib/clickhouse';
 import { createLogger } from '../../lib/logger';
-import { incrementError, incrementSuccess } from '../../lib/prometheus';
-import { initService, markServiceAlive } from '../../lib/service-init';
+import { incrementError } from '../../lib/prometheus';
 import {
     buildLiveOutcomeRow,
     buildOutcomeToQuestion,
@@ -12,10 +11,11 @@ import {
     fetchSettledOutcome,
     type OutcomeMetaRow,
     type QuestionMetaRow,
-} from './info';
+} from './outcomes-info';
+import { nowRefreshTime } from './refresh-time';
 
-const serviceName = 'hyperliquid-outcomes';
-const log = createLogger(serviceName);
+const serviceName = 'hyperliquid';
+const log = createLogger(`${serviceName}:outcomes`);
 
 /**
  * Max in-flight `settledOutcome` lookups per cycle. Cold-start probes ~200
@@ -65,17 +65,7 @@ function parseUint64Set(rows: { outcome_id: string }[]): Set<number> {
 }
 
 /**
- * Format a `DateTime64(3, 'UTC')`-compatible timestamp. CH rejects the
- * trailing `Z` but accepts the millisecond fraction, and we preserve ms so
- * closely-spaced polls remain deterministic for RMT merges (same convention
- * as the sibling `hyperliquid` service).
- */
-function nowRefreshTime(): string {
-    return new Date().toISOString().slice(0, 23).replace('T', ' ');
-}
-
-/**
- * One poll cycle:
+ * One outcome-meta poll cycle:
  *   1. Pull `outcomeMeta` (live outcomes + question groupings).
  *   2. Read distinct `outcome_id` from `outcome_fills` to discover settled
  *      outcomes not in the live snapshot.
@@ -83,19 +73,10 @@ function nowRefreshTime(): string {
  *   4. Insert all rows with a single `refresh_time`. RMT collapses repeated
  *      rows on subsequent polls.
  *
- * The CLI runner loops with `AUTO_RESTART_DELAY` between cycles, so one
- * `run()` call = one snapshot.
+ * Caller (the combined `hyperliquid` service in index.ts) orchestrates with
+ * the spot poller in one cycle.
  */
-export async function run(): Promise<void> {
-    initService({ serviceName });
-
-    const infoUrl = process.env.HYPERLIQUID_INFO_URL;
-    if (!infoUrl) {
-        throw new Error(
-            'HYPERLIQUID_INFO_URL is required (set to a Hyperliquid /info endpoint)',
-        );
-    }
-
+export async function runOutcomesCycle(infoUrl: string): Promise<void> {
     log.info('Fetching outcome metadata');
     const startTime = performance.now();
 
@@ -233,14 +214,4 @@ export async function run(): Promise<void> {
         settledErrored,
         cycleMs,
     });
-    // We insert directly via `insertClient` rather than the batch-insert
-    // queue, so the queue's `getLastSuccessfulFlushAt()` never advances.
-    // Bump the wall-clock heartbeat here so `/live` reflects real progress
-    // after the startup grace window.
-    markServiceAlive();
-    incrementSuccess(serviceName);
-}
-
-if (import.meta.main) {
-    await run();
 }

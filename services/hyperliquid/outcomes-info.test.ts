@@ -10,7 +10,7 @@ import {
     type HyperliquidOutcomeSpec,
     type HyperliquidQuestion,
     type HyperliquidSettledOutcome,
-} from './info';
+} from './outcomes-info';
 
 const REFRESH = '2026-06-11 12:00:00.000';
 

@@ -1,82 +1,38 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
-const mockInsert = mock(() => Promise.resolve());
-const mockQuery = mock(() =>
-    Promise.resolve({
-        data: [],
-        metrics: { httpRequestTimeMs: 0, dataFetchTimeMs: 0, totalTimeMs: 0 },
-    }),
-);
+const mockRunSpot = mock((_url: string) => Promise.resolve());
+const mockRunOutcomes = mock((_url: string) => Promise.resolve());
+const mockInitService = mock(() => {});
+const mockMarkServiceAlive = mock(() => {});
 const mockIncrementSuccess = mock(() => {});
 const mockIncrementError = mock(() => {});
-const mockInitService = mock(() => {});
 
-// `mock.module` applies process-wide for the test session. Mirror the full set
-// of exports other test files mock so a later `mock.module` call in another
-// suite (e.g. polymarket) can override cleanly without leaving dangling
-// undefined imports.
-mock.module('../../lib/clickhouse', () => ({
-    insertClient: { insert: mockInsert },
-    query: mockQuery,
+mock.module('./spot', () => ({ runSpotCycle: mockRunSpot }));
+mock.module('./outcomes', () => ({ runOutcomesCycle: mockRunOutcomes }));
+mock.module('../../lib/service-init', () => ({
+    initService: mockInitService,
+    markServiceAlive: mockMarkServiceAlive,
 }));
-
 mock.module('../../lib/prometheus', () => ({
     incrementSuccess: mockIncrementSuccess,
     incrementError: mockIncrementError,
 }));
 
-mock.module('../../lib/service-init', () => ({
-    initService: mockInitService,
-}));
-
-const sampleMeta = {
-    tokens: [
-        {
-            name: 'USDC',
-            fullName: null,
-            index: 0,
-            tokenId: '0x00',
-            szDecimals: 8,
-            weiDecimals: 8,
-            isCanonical: true,
-            evmContract: null,
-            deployerTradingFeeShare: '0.0',
-        },
-        {
-            name: 'HYPE',
-            fullName: null,
-            index: 150,
-            tokenId: '0x96',
-            szDecimals: 2,
-            weiDecimals: 8,
-            isCanonical: false,
-            evmContract: null,
-            deployerTradingFeeShare: '0.0',
-        },
-    ],
-    universe: [
-        {
-            tokens: [150, 0],
-            name: '@107',
-            index: 107,
-            isCanonical: false,
-        },
-    ],
-};
-
-describe('hyperliquid run()', () => {
-    const originalFetch = globalThis.fetch;
+describe('hyperliquid run() — combined orchestrator', () => {
     const originalUrl = process.env.HYPERLIQUID_INFO_URL;
 
     beforeEach(() => {
-        mockInsert.mockClear();
+        mockRunSpot.mockClear();
+        mockRunOutcomes.mockClear();
+        mockInitService.mockClear();
+        mockMarkServiceAlive.mockClear();
         mockIncrementSuccess.mockClear();
         mockIncrementError.mockClear();
-        mockInitService.mockClear();
+        mockRunSpot.mockImplementation(() => Promise.resolve());
+        mockRunOutcomes.mockImplementation(() => Promise.resolve());
     });
 
     afterEach(() => {
-        globalThis.fetch = originalFetch;
         if (originalUrl === undefined) {
             delete process.env.HYPERLIQUID_INFO_URL;
         } else {
@@ -88,54 +44,91 @@ describe('hyperliquid run()', () => {
         delete process.env.HYPERLIQUID_INFO_URL;
         const { run } = await import('./index');
         await expect(run()).rejects.toThrow(/HYPERLIQUID_INFO_URL/);
+        expect(mockRunSpot).not.toHaveBeenCalled();
+        expect(mockRunOutcomes).not.toHaveBeenCalled();
+        expect(mockMarkServiceAlive).not.toHaveBeenCalled();
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
     });
 
-    test('inserts resolved spot pair names with refresh_time', async () => {
+    test('runs spot + outcomes cycles in parallel with the configured info URL', async () => {
         process.env.HYPERLIQUID_INFO_URL = 'http://example/info';
-        globalThis.fetch = mock(() =>
-            Promise.resolve(
-                new Response(JSON.stringify(sampleMeta), { status: 200 }),
-            ),
-        ) as unknown as typeof fetch;
 
         const { run } = await import('./index');
         await run();
 
-        expect(mockInsert).toHaveBeenCalledTimes(1);
-        const arg = mockInsert.mock.calls[0]![0] as {
-            table: string;
-            values: Array<{
-                coin: string;
-                market_name: string;
-                base_token: string;
-                quote_token: string;
-                refresh_time: string;
-            }>;
-            format: string;
-        };
-        expect(arg.table).toBe('state_spot_pair_names');
-        expect(arg.format).toBe('JSONEachRow');
-        expect(arg.values).toHaveLength(1);
-        expect(arg.values[0]!.coin).toBe('@107');
-        expect(arg.values[0]!.market_name).toBe('HYPE/USDC');
-        expect(arg.values[0]!.base_token).toBe('HYPE');
-        expect(arg.values[0]!.quote_token).toBe('USDC');
-        expect(arg.values[0]!.refresh_time).toMatch(
-            /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/,
-        );
-        expect(mockIncrementSuccess).toHaveBeenCalledTimes(1);
-        expect(mockIncrementError).not.toHaveBeenCalled();
+        expect(mockInitService).toHaveBeenCalledTimes(1);
+        expect(mockRunSpot).toHaveBeenCalledTimes(1);
+        expect(mockRunOutcomes).toHaveBeenCalledTimes(1);
+        expect(mockRunSpot.mock.calls[0]![0]).toBe('http://example/info');
+        expect(mockRunOutcomes.mock.calls[0]![0]).toBe('http://example/info');
     });
 
-    test('records an error metric and rethrows when fetch fails', async () => {
+    test('advances heartbeat + success metric only when both sub-cycles succeed', async () => {
         process.env.HYPERLIQUID_INFO_URL = 'http://example/info';
-        globalThis.fetch = mock(() =>
-            Promise.resolve(new Response('boom', { status: 502 })),
-        ) as unknown as typeof fetch;
 
         const { run } = await import('./index');
-        await expect(run()).rejects.toThrow();
-        expect(mockIncrementError).toHaveBeenCalledTimes(1);
-        expect(mockInsert).not.toHaveBeenCalled();
+        await run();
+
+        expect(mockMarkServiceAlive).toHaveBeenCalledTimes(1);
+        expect(mockIncrementSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    test('does NOT advance heartbeat when outcomes sub-cycle fails', async () => {
+        process.env.HYPERLIQUID_INFO_URL = 'http://example/info';
+        mockRunOutcomes.mockImplementation(() =>
+            Promise.reject(new Error('outcomes boom')),
+        );
+
+        const { run } = await import('./index');
+        await expect(run()).rejects.toThrow('outcomes boom');
+
+        // Both sub-cycles still attempted — failure in one must not short-circuit
+        // the other (`Promise.allSettled` semantics).
+        expect(mockRunSpot).toHaveBeenCalledTimes(1);
+        expect(mockRunOutcomes).toHaveBeenCalledTimes(1);
+        // Liveness contract: partial success is not success. /live must reflect
+        // that the service is degraded even though spot completed.
+        expect(mockMarkServiceAlive).not.toHaveBeenCalled();
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
+    });
+
+    test('does NOT advance heartbeat when spot sub-cycle fails', async () => {
+        process.env.HYPERLIQUID_INFO_URL = 'http://example/info';
+        mockRunSpot.mockImplementation(() =>
+            Promise.reject(new Error('spot boom')),
+        );
+
+        const { run } = await import('./index');
+        await expect(run()).rejects.toThrow('spot boom');
+
+        expect(mockMarkServiceAlive).not.toHaveBeenCalled();
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
+    });
+
+    test('both failures surface together via AggregateError, no heartbeat', async () => {
+        process.env.HYPERLIQUID_INFO_URL = 'http://example/info';
+        mockRunSpot.mockImplementation(() =>
+            Promise.reject(new Error('spot boom')),
+        );
+        mockRunOutcomes.mockImplementation(() =>
+            Promise.reject(new Error('outcomes boom')),
+        );
+
+        const { run } = await import('./index');
+        const err = await run().then(
+            () => null,
+            (e) => e,
+        );
+        expect(err).toBeInstanceOf(AggregateError);
+        // Both sub-cycle errors preserved — operator sees both reasons in the
+        // supervisor's stack instead of losing the second to a silent drop.
+        const reasons = (err as AggregateError).errors.map(
+            (e: unknown) => (e as Error).message,
+        );
+        expect(reasons).toContain('spot boom');
+        expect(reasons).toContain('outcomes boom');
+
+        expect(mockMarkServiceAlive).not.toHaveBeenCalled();
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
     });
 });
