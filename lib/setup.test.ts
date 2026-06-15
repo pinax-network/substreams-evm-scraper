@@ -320,7 +320,7 @@ describe('schema files', () => {
         expect(plainMergeTree).toBeNull();
     });
 
-    test('should parse hyperliquid-outcomes schema and transform for cluster', async () => {
+    test('should parse hyperliquid outcomes schema and transform for cluster', async () => {
         const sql = await Bun.file(
             './sql.schemas/schema.hyperliquid_outcomes.sql',
         ).text();

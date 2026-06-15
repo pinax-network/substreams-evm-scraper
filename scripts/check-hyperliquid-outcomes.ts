@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Validate the `hyperliquid-outcomes` scraper deployment against whichever
- * ClickHouse the env points at.
+ * Validate the outcome-metadata side of the consolidated `hyperliquid`
+ * scraper deployment against whichever ClickHouse the env points at.
  *
  * Reports:
  *  - schema presence + column shape for `state_outcome_meta` /

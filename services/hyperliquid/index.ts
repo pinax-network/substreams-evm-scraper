@@ -56,10 +56,12 @@ export async function run(): Promise<void> {
         });
         // Heartbeat must NOT advance on a partial- or full-failure cycle:
         // a successful sub-cycle alone is not enough to claim the service
-        // is healthy. Surface the first error so the supervisor can
-        // backoff/restart; per-cycle error metrics already fired from
+        // is healthy. Surface every failure so the supervisor's stack
+        // trace doesn't silently drop the second error when both
+        // sub-cycles reject — per-cycle error metrics already fired from
         // inside each cycle's catch block.
-        throw errors[0];
+        if (errors.length === 1) throw errors[0];
+        throw new AggregateError(errors, 'hyperliquid cycle failed');
     }
 
     // Both sub-cycles completed (either inserted or early-returned on

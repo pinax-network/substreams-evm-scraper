@@ -105,7 +105,7 @@ describe('hyperliquid run() — combined orchestrator', () => {
         expect(mockIncrementSuccess).not.toHaveBeenCalled();
     });
 
-    test('both failures still surface — first error wins, no heartbeat', async () => {
+    test('both failures surface together via AggregateError, no heartbeat', async () => {
         process.env.HYPERLIQUID_INFO_URL = 'http://example/info';
         mockRunSpot.mockImplementation(() =>
             Promise.reject(new Error('spot boom')),
@@ -115,7 +115,18 @@ describe('hyperliquid run() — combined orchestrator', () => {
         );
 
         const { run } = await import('./index');
-        await expect(run()).rejects.toThrow('spot boom');
+        const err = await run().then(
+            () => null,
+            (e) => e,
+        );
+        expect(err).toBeInstanceOf(AggregateError);
+        // Both sub-cycle errors preserved — operator sees both reasons in the
+        // supervisor's stack instead of losing the second to a silent drop.
+        const reasons = (err as AggregateError).errors.map(
+            (e: unknown) => (e as Error).message,
+        );
+        expect(reasons).toContain('spot boom');
+        expect(reasons).toContain('outcomes boom');
 
         expect(mockMarkServiceAlive).not.toHaveBeenCalled();
         expect(mockIncrementSuccess).not.toHaveBeenCalled();

@@ -12,6 +12,7 @@ import {
     type OutcomeMetaRow,
     type QuestionMetaRow,
 } from './outcomes-info';
+import { nowRefreshTime } from './refresh-time';
 
 const serviceName = 'hyperliquid';
 const log = createLogger(`${serviceName}:outcomes`);
@@ -61,16 +62,6 @@ function parseUint64Set(rows: { outcome_id: string }[]): Set<number> {
         if (Number.isFinite(n)) ids.add(n);
     }
     return ids;
-}
-
-/**
- * Format a `DateTime64(3, 'UTC')`-compatible timestamp. CH rejects the
- * trailing `Z` but accepts the millisecond fraction, and we preserve ms so
- * closely-spaced polls remain deterministic for RMT merges (same convention
- * as the sibling `hyperliquid` service).
- */
-function nowRefreshTime(): string {
-    return new Date().toISOString().slice(0, 23).replace('T', ' ');
 }
 
 /**

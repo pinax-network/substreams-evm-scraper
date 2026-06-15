@@ -1,6 +1,7 @@
 import { insertClient } from '../../lib/clickhouse';
 import { createLogger } from '../../lib/logger';
 import { incrementError } from '../../lib/prometheus';
+import { nowRefreshTime } from './refresh-time';
 import {
     fetchSpotMeta,
     type HyperliquidSpotMeta,
@@ -45,13 +46,7 @@ export async function runSpotCycle(infoUrl: string): Promise<void> {
         return;
     }
 
-    // ClickHouse DateTime64(3, 'UTC') rejects the trailing `Z`, so trim it
-    // but keep the millisecond precision so closely-spaced polls produce
-    // distinct `refresh_time` values (deterministic RMT merges).
-    const refresh_time = new Date()
-        .toISOString()
-        .slice(0, 23)
-        .replace('T', ' ');
+    const refresh_time = nowRefreshTime();
     const values = rows.map((r) => ({ ...r, refresh_time }));
 
     try {

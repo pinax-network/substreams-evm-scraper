@@ -13,7 +13,7 @@ const FETCH_TIMEOUT_MS = (() => {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000;
 })();
 
-const log = createLogger('hyperliquid-outcomes');
+const log = createLogger('hyperliquid:outcomes');
 
 /**
  * One outcome entry as returned by `POST /info {type: outcomeMeta}` and (under
