@@ -176,9 +176,12 @@ describe('hyperliquid runOutcomesCycle()', () => {
         expect(questionCall!.values).toHaveLength(1);
         expect(questionCall!.values[0]!.question_id).toBe(32);
 
-        expect(mockIncrementSuccess).toHaveBeenCalledTimes(1);
+        // The orchestrator (index.ts run()) is responsible for the success
+        // metric + heartbeat once BOTH sub-cycles complete; this sub-cycle
+        // must not advance them on its own.
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
         expect(mockIncrementError).not.toHaveBeenCalled();
-        expect(mockMarkServiceAlive).toHaveBeenCalledTimes(1);
+        expect(mockMarkServiceAlive).not.toHaveBeenCalled();
     });
 
     test('proceeds when known-ids query fails (cold cluster)', async () => {
@@ -195,7 +198,7 @@ describe('hyperliquid runOutcomesCycle()', () => {
         await runOutcomesCycle('http://example/info');
 
         expect(mockInsert).toHaveBeenCalledTimes(2);
-        expect(mockIncrementSuccess).toHaveBeenCalledTimes(1);
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
         expect(mockIncrementError).not.toHaveBeenCalled();
     });
 
@@ -224,7 +227,7 @@ describe('hyperliquid runOutcomesCycle()', () => {
             .map((c) => c[0] as InsertCallArg)
             .find((c) => c.table === 'state_outcome_meta');
         expect(outcomeCall!.values).toHaveLength(2);
-        expect(mockIncrementSuccess).toHaveBeenCalledTimes(1);
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
     });
 
     test('skips settledOutcome probes for ids already captured as settled', async () => {
@@ -256,11 +259,11 @@ describe('hyperliquid runOutcomesCycle()', () => {
             .map((c) => c[0] as InsertCallArg)
             .find((c) => c.table === 'state_outcome_meta');
         expect(outcomeCall!.values).toHaveLength(2);
-        expect(mockIncrementSuccess).toHaveBeenCalledTimes(1);
-        expect(mockMarkServiceAlive).toHaveBeenCalledTimes(1);
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
+        expect(mockMarkServiceAlive).not.toHaveBeenCalled();
     });
 
-    test('returns early without success metric when outcomeMeta is empty', async () => {
+    test('returns early without inserting when outcomeMeta is empty', async () => {
         globalThis.fetch = mock(() =>
             Promise.resolve(
                 new Response(JSON.stringify({ outcomes: [], questions: [] }), {

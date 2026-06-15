@@ -1,6 +1,6 @@
 import { insertClient } from '../../lib/clickhouse';
 import { createLogger } from '../../lib/logger';
-import { incrementError, incrementSuccess } from '../../lib/prometheus';
+import { incrementError } from '../../lib/prometheus';
 import {
     fetchSpotMeta,
     type HyperliquidSpotMeta,
@@ -67,5 +67,4 @@ export async function runSpotCycle(infoUrl: string): Promise<void> {
     }
 
     log.info('Inserted spot pair names', { count: values.length });
-    incrementSuccess(serviceName);
 }

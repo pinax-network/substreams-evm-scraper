@@ -108,7 +108,10 @@ describe('hyperliquid runSpotCycle()', () => {
         expect(arg.values[0]!.refresh_time).toMatch(
             /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/,
         );
-        expect(mockIncrementSuccess).toHaveBeenCalledTimes(1);
+        // The orchestrator (index.ts run()) is responsible for the success
+        // metric + heartbeat once BOTH sub-cycles complete; this sub-cycle
+        // must not advance them on its own.
+        expect(mockIncrementSuccess).not.toHaveBeenCalled();
         expect(mockIncrementError).not.toHaveBeenCalled();
     });
 
