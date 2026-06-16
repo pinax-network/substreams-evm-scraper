@@ -263,6 +263,64 @@ describe('hyperliquid runOutcomesCycle()', () => {
         expect(mockMarkServiceAlive).not.toHaveBeenCalled();
     });
 
+    test('recovers question_id from settledOutcome wrapper when live map has no entry', async () => {
+        // outcome 318 (Germany) belonged to question 54 (Germany vs Curacao),
+        // which has fully settled and dropped from outcomeMeta. The live map
+        // can't link it back, but the settledOutcome response still carries
+        // the parent question id under `question.question.settled`.
+        mockQuery.mockImplementation(
+            mockQueryRouter({
+                knownIds: ['318'],
+                alreadySettled: [],
+            }),
+        );
+        globalThis.fetch = mock((_url: string, init: RequestInit) => {
+            const body = JSON.parse(init.body as string);
+            if (body.type === 'outcomeMeta') {
+                return Promise.resolve(
+                    new Response(JSON.stringify(liveBody), { status: 200 }),
+                );
+            }
+            if (body.type === 'settledOutcome' && body.outcome === 318) {
+                return Promise.resolve(
+                    new Response(
+                        JSON.stringify({
+                            spec: {
+                                outcome: 318,
+                                name: 'Germany',
+                                description: 'Resolves Yes if Germany wins.',
+                                sideSpecs: [{ name: 'Yes' }, { name: 'No' }],
+                                quoteToken: 'USDC',
+                            },
+                            settleFraction: '1.0',
+                            details: 'FIFA declared Germany the winner.',
+                            question: {
+                                question: { settled: 54 },
+                                name: 'World Cup: Germany vs Curacao',
+                                description:
+                                    'This market has three possible outcomes...',
+                            },
+                        }),
+                        { status: 200 },
+                    ),
+                );
+            }
+            return Promise.resolve(new Response('null', { status: 200 }));
+        }) as unknown as typeof fetch;
+
+        const { runOutcomesCycle } = await import('./outcomes');
+        await runOutcomesCycle('http://example/info');
+
+        const outcomeCall = mockInsert.mock.calls
+            .map((c) => c[0] as InsertCallArg)
+            .find((c) => c.table === 'state_outcome_meta');
+        const settled318 = outcomeCall!.values.find(
+            (r) => r.outcome_id === 318,
+        );
+        expect(settled318?.status).toBe('settled');
+        expect(settled318?.question_id).toBe(54);
+    });
+
     test('returns early without inserting when outcomeMeta is empty', async () => {
         globalThis.fetch = mock(() =>
             Promise.resolve(
