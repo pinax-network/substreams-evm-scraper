@@ -7,6 +7,7 @@ import {
     buildOutcomeToQuestion,
     buildQuestionRow,
     buildSettledOutcomeRow,
+    extractSettledQuestionId,
     fetchOutcomeMeta,
     fetchSettledOutcome,
     type OutcomeMetaRow,
@@ -43,14 +44,17 @@ async function fetchKnownOutcomeIds(): Promise<Set<number>> {
 }
 
 /**
- * Discover outcome_ids we've already captured as `status='settled'`. Settled
- * payloads are immutable on the HL side, so once we have one we never need to
- * re-probe — skipping them turns the steady-state cycle into a no-op on the
- * Info API even as the cumulative settled universe grows.
+ * Discover outcome_ids we've already captured as `status='settled'` *with* a
+ * populated `question_id`. Once both are written the row is terminal — settled
+ * payloads are immutable on the HL side, so skipping them turns the steady-state
+ * cycle into a no-op on the Info API even as the cumulative settled universe
+ * grows. Rows with `status='settled' AND question_id IS NULL` are orphans
+ * (early scraper missed the multi-outcome question link) and stay eligible for
+ * re-probe so they self-heal on the next cycle.
  */
 async function fetchAlreadySettledIds(): Promise<Set<number>> {
     const { data } = await query<{ outcome_id: string }>(
-        "SELECT toString(outcome_id) AS outcome_id FROM state_outcome_meta FINAL WHERE status = 'settled'",
+        "SELECT toString(outcome_id) AS outcome_id FROM state_outcome_meta FINAL WHERE status = 'settled' AND question_id IS NOT NULL",
     );
     return parseUint64Set(data);
 }
@@ -162,7 +166,8 @@ export async function runOutcomesCycle(infoUrl: string): Promise<void> {
                     outcomeRows.push(
                         buildSettledOutcomeRow(
                             s,
-                            outcomeToQuestion.get(s.spec.outcome) ?? null,
+                            outcomeToQuestion.get(s.spec.outcome) ??
+                                extractSettledQuestionId(s),
                             refresh_time,
                         ),
                     );

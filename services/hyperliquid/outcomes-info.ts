@@ -54,14 +54,35 @@ export interface HyperliquidOutcomeMeta {
 }
 
 /**
+ * Question wrapper carried on the `settledOutcome` response — present when the
+ * outcome belongs to a multi-outcome question. The inner `question` discriminator
+ * indicates the parent question's lifecycle: `{settled: N}` for a fully-settled
+ * question that has dropped from `outcomeMeta`, `{live: N}` for a still-active
+ * parent (some sibling outcomes resolved, others ongoing).
+ *
+ * HL only emits this block for outcomes that belonged to a question; binary
+ * single-outcome markets resolve without a wrapper.
+ */
+export interface HyperliquidSettledOutcomeQuestion {
+    question: { settled?: number; live?: number };
+    name: string;
+    description: string;
+}
+
+/**
  * Settlement payload returned by `POST /info {type: settledOutcome, outcome: N}`
  * when the outcome has resolved. Returns `null` (top-level) for outcomes still
  * live — callers must distinguish that case before parsing.
+ *
+ * `question` is absent for binary single-outcome markets and populated for
+ * multi-outcome markets — this is the only path to recover the parent question
+ * id once the question has dropped from `outcomeMeta`.
  */
 export interface HyperliquidSettledOutcome {
     spec: HyperliquidOutcomeSpec;
     settleFraction: string;
     details: string;
+    question?: HyperliquidSettledOutcomeQuestion;
 }
 
 /** Row shape inserted into `state_outcome_meta`. */
@@ -156,6 +177,22 @@ export async function fetchSettledOutcome(
         return null;
     }
     return body;
+}
+
+/**
+ * Extract the parent question id from a `settledOutcome` response. Reads from
+ * `question.question.{settled,live}` and returns the first defined of the two.
+ * Returns `null` for binary single-outcome markets (no `question` wrapper)
+ * or when the wrapper is present but neither key carries a number.
+ */
+export function extractSettledQuestionId(
+    settled: HyperliquidSettledOutcome,
+): number | null {
+    const q = settled.question?.question;
+    if (!q) return null;
+    if (typeof q.settled === 'number') return q.settled;
+    if (typeof q.live === 'number') return q.live;
+    return null;
 }
 
 /**

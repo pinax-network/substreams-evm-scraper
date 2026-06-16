@@ -4,6 +4,7 @@ import {
     buildOutcomeToQuestion,
     buildQuestionRow,
     buildSettledOutcomeRow,
+    extractSettledQuestionId,
     fetchOutcomeMeta,
     fetchSettledOutcome,
     type HyperliquidOutcomeMeta,
@@ -126,6 +127,56 @@ describe('buildSettledOutcomeRow', () => {
             REFRESH,
         );
         expect(row.settle_fraction).toBeNull();
+    });
+});
+
+describe('extractSettledQuestionId', () => {
+    const baseSettled: HyperliquidSettledOutcome = {
+        spec: {
+            outcome: 318,
+            name: 'Germany',
+            description: 'Resolves to Yes if Germany wins the Game.',
+            sideSpecs: [{ name: 'Yes' }, { name: 'No' }],
+            quoteToken: 'USDC',
+        },
+        settleFraction: '1.0',
+        details: 'FIFA declared Germany the winner.',
+    };
+
+    test('returns the settled question id when the parent question has fully resolved', () => {
+        const settled: HyperliquidSettledOutcome = {
+            ...baseSettled,
+            question: {
+                question: { settled: 54 },
+                name: 'World Cup: Germany vs Curacao',
+                description: '...',
+            },
+        };
+        expect(extractSettledQuestionId(settled)).toBe(54);
+    });
+
+    test('returns the live question id when the parent question is still ongoing', () => {
+        const settled: HyperliquidSettledOutcome = {
+            ...baseSettled,
+            question: {
+                question: { live: 32 },
+                name: '2026 World Cup Champion',
+                description: '...',
+            },
+        };
+        expect(extractSettledQuestionId(settled)).toBe(32);
+    });
+
+    test('returns null for binary single-outcome markets (no question wrapper)', () => {
+        expect(extractSettledQuestionId(baseSettled)).toBeNull();
+    });
+
+    test('returns null when the wrapper is present but the discriminator is empty', () => {
+        const settled: HyperliquidSettledOutcome = {
+            ...baseSettled,
+            question: { question: {}, name: '', description: '' },
+        };
+        expect(extractSettledQuestionId(settled)).toBeNull();
     });
 });
 
