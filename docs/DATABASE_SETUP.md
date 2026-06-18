@@ -50,12 +50,14 @@ npm run cli setup metadata-evm
 
 ### 2. schema.metadata_solana.sql
 
-**Purpose**: Stores Solana SPL token metadata (name, symbol, decimals, uri, source, token_standard)
+**Purpose**: Stores Solana SPL token metadata (name, symbol, decimals, uri, source, token_standard) and deploys helper lookup functions for common Solana program IDs and token mints.
 
 **Contents**:
 - **Tables**:
   - `metadata` - Stores token metadata from Metaplex or Token-2022
   - `metadata_errors` - Tracks RPC errors during metadata fetching
+  - `program_names()` - Maps common Solana program IDs to human-readable names
+  - `token_names()` - Maps common Solana token mint addresses to human-readable names
   - Uses `ReplacingMergeTree` engine for automatic deduplication
 
 **Deployment**:
